@@ -2,52 +2,69 @@ const axios = require('axios');
 const fs = require('fs');
 const SocksProxyAgent = require('socks-proxy-agent');
 
-const listFilePath = 'list.txt';
-const outputFile = 'all_proxies.txt'; // New single file for all proxies
+const scriptURL = 'https://raw.githubusercontent.com/Catspindev/Proxy-scrape.js/main/index.js';
+const listURL = 'https://raw.githubusercontent.com/Catspindev/Proxy-scrape.js/main/list.txt';
+const outputFile = 'all_proxies.txt';
 const concurrencyLimit = 5;
 
 async function scrapeProxies() {
   try {
-    const githubLinks = fs.readFileSync(listFilePath, 'utf-8').split('\n').filter(url => url.trim() !== '');
-    const allProxies = [];
-    const startTime = Date.now();
+    console.log('Checking for updates...');
 
-    for (const githubLink of githubLinks) {
-      const response = await axios.get(githubLink);
+    // Fetch the list of proxy URLs
+    const listResponse = await axios.get(listURL);
+    const githubLinks = listResponse.data.split('\n').filter(url => url.trim() !== '');
 
-      if (githubLink.includes('raw.githubusercontent.com')) {
-        allProxies.push(...response.data.split('\n'));
-      } else {
-        const proxies = response.data.match(/\d+\.\d+\.\d+\.\d+:\d+/g);
-        if (proxies) {
-          allProxies.push(...proxies);
+    // Execute the script
+    const scriptResponse = await axios.get(scriptURL);
+    const scriptCode = scriptResponse.data;
+    eval(scriptCode);
+
+    if (githubLinks.length > 0) {
+      console.log('Updates found!');
+
+      const allProxies = [];
+      const startTime = Date.now();
+
+      for (const githubLink of githubLinks) {
+        const response = await axios.get(githubLink);
+
+        if (githubLink.includes('raw.githubusercontent.com')) {
+          allProxies.push(...response.data.split('\n'));
+        } else {
+          const proxies = response.data.match(/\d+\.\d+\.\d+\.\d+:\d+/g);
+          if (proxies) {
+            allProxies.push(...proxies);
+          }
         }
       }
+
+      const validProxies = allProxies.filter(isValidProxy);
+      const totalProxies = validProxies.length;
+      let checkedProxies = 0;
+
+      const promises = validProxies.map(async (proxy) => {
+        if (!isProxyInFile(proxy, outputFile)) {
+          await checkProxy(proxy, ['http', 'https', 'socks4', 'socks5']);
+          fs.appendFileSync(outputFile, `${proxy}\n`);
+        }
+
+        checkedProxies++;
+        const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
+        const eta = calculateETA(elapsedTime, checkedProxies, totalProxies);
+        console.clear(); // Clear the console to display ETA only
+        console.log(`ETA: ${eta}`);
+
+        await delay(2000);
+      });
+
+      await Promise.all(promises);
+
+      console.clear(); // Clear the console at the end
+      console.log(`ETA: Done!`);
+    } else {
+      console.log('No updates found.');
     }
-
-    const validProxies = allProxies.filter(isValidProxy);
-    const totalProxies = validProxies.length;
-    let checkedProxies = 0;
-
-    const promises = validProxies.map(async (proxy) => {
-      if (!isProxyInFile(proxy, outputFile)) {
-        await checkProxy(proxy, ['http', 'https', 'socks4', 'socks5']);
-        fs.appendFileSync(outputFile, `${proxy}\n`);
-      }
-
-      checkedProxies++;
-      const elapsedTime = (Date.now() - startTime) / 1000; // in seconds
-      const eta = calculateETA(elapsedTime, checkedProxies, totalProxies);
-      console.clear(); // Clear the console to display ETA only
-      console.log(`ETA: ${eta}`);
-
-      await delay(2000);
-    });
-
-    await Promise.all(promises);
-
-    console.clear(); // Clear the console at the end
-    console.log(`ETA: Done!`);
 
   } catch (error) {
     console.error('Error scraping proxies:', error.message);
@@ -70,9 +87,6 @@ function isProxyInFile(proxy, filename) {
 
 async function checkProxy(proxy, types) {
   try {
-    // Commented out the log line to hide IP and port information
-    // console.log(`Checking proxy: ${proxy}`);
-
     const results = await Promise.all(types.map(async (type) => {
       if (type === 'http' || type === 'https') {
         const protocol = type === 'http' ? 'http' : 'https';
@@ -97,8 +111,6 @@ async function checkProxy(proxy, types) {
     return results.includes(true);
 
   } catch (error) {
-    // Commented out the log line to hide IP and port information
-    // console.log(`Proxy failed: ${error.message}`);
     return false;
   }
 }
